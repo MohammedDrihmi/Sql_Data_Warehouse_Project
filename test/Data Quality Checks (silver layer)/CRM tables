@@ -1,0 +1,191 @@
+/* =========================================================
+   SILVER LAYER – DATA QUALITY VALIDATION (CRM)
+   =========================================================
+   Purpose:
+   This script validates the quality of CLEANED data after
+   it has been transformed and loaded into the Silver layer.
+
+   Key Principles:
+   - Silver layer data is expected to be clean and reliable
+   - Any returned rows indicate a DATA PIPELINE ISSUE
+   - No transformation or cleaning is performed here
+   - These checks act as a final validation gate before
+     downstream analytics and Gold layer consumption
+
+   Tables Covered:
+   - crm_cust_info      (Customers)
+   - crm_prd_info       (Products)
+   - crm_sales_details  (Sales Details)
+========================================================= */
+
+
+----------------------------------------------------------
+-- 1. CUSTOMER DATA QUALITY CHECKS (crm_cust_info)
+----------------------------------------------------------
+
+-- 1.1 NULL OR DUPLICATE PRIMARY KEY
+-- Expectation: No results
+
+SELECT
+    cst_id,
+    COUNT(*) AS id_count
+FROM silver.crm_cust_info
+GROUP BY cst_id
+HAVING COUNT(*) > 1
+    OR cst_id IS NULL;
+
+
+-- 1.2 UNWANTED LEADING / TRAILING SPACES
+-- Expectation: No results
+
+-- First Name
+SELECT
+    cst_firstname
+FROM silver.crm_cust_info
+WHERE cst_firstname <> TRIM(cst_firstname);
+
+-- Last Name
+SELECT
+    cst_lastname
+FROM silver.crm_cust_info
+WHERE cst_lastname <> TRIM(cst_lastname);
+
+
+-- 1.3 DATA CONSISTENCY – LOW CARDINALITY COLUMNS
+
+-- Gender
+-- Expected values: 'Male', 'Female'
+SELECT DISTINCT
+    cst_gndr
+FROM silver.crm_cust_info;
+
+-- Marital Status
+-- Expected values: 'Married', 'Single', 'N/A'
+SELECT DISTINCT
+    cst_marital_status
+FROM silver.crm_cust_info;
+
+
+
+----------------------------------------------------------
+-- 2. PRODUCT DATA QUALITY CHECKS (crm_prd_info)
+----------------------------------------------------------
+
+-- 2.1 NULL OR DUPLICATE PRIMARY KEY
+-- Expectation: No results
+
+SELECT
+    prd_id,
+    COUNT(*) AS total_count
+FROM silver.crm_prd_info
+GROUP BY prd_id
+HAVING COUNT(*) > 1
+    OR prd_id IS NULL;
+
+
+-- 2.2 UNWANTED LEADING / TRAILING SPACES
+-- Expectation: No results
+
+SELECT *
+FROM silver.crm_prd_info
+WHERE prd_nm <> TRIM(prd_nm);
+
+
+-- 2.3 NUMERIC DATA VALIDATION
+-- Column: prd_cost
+-- Expectation: Cost must be > 0 and NOT NULL
+
+SELECT *
+FROM silver.crm_prd_info
+WHERE prd_cost <= 0
+    OR prd_cost IS NULL;
+
+
+-- 2.4 DATA CONSISTENCY – LOW CARDINALITY
+-- Expected values:
+-- Road, Other Sales, Touring, Mountain, 'N/A'
+
+SELECT DISTINCT
+    prd_line
+FROM silver.crm_prd_info;
+
+
+-- 2.5 INVALID DATE CHECK
+-- Product end date must be greater than start date
+
+SELECT *
+FROM silver.crm_prd_info
+WHERE prd_end_dt < prd_start_dt;
+
+
+
+----------------------------------------------------------
+-- 3. SALES DATA QUALITY CHECKS (crm_sales_details)
+----------------------------------------------------------
+
+-- 3.1 UNWANTED LEADING / TRAILING SPACES
+-- Expectation: No results
+
+SELECT
+    sls_ord_num
+FROM silver.crm_sales_details
+WHERE sls_ord_num <> TRIM(sls_ord_num);
+
+
+-- 3.2 FOREIGN KEY INTEGRITY
+-- Expectation: All keys must exist in parent tables
+
+-- Product Key
+SELECT *
+FROM silver.crm_sales_details
+WHERE sls_prd_key NOT IN (
+    SELECT prd_key
+    FROM silver.crm_prd_info
+);
+
+-- Customer ID
+SELECT *
+FROM silver.crm_sales_details
+WHERE sls_cust_id NOT IN (
+    SELECT cst_id
+    FROM silver.crm_cust_info
+);
+
+
+-- 3.3 SHIP DATE VALIDATION
+-- Expectations:
+-- - Valid date
+-- - Within acceptable range
+-- - Ship date >= order date
+
+SELECT
+    sls_ship_dt
+FROM silver.crm_sales_details
+WHERE LEN(sls_ship_dt) <> 8
+    OR sls_ship_dt < '1900-01-01'
+    OR sls_ship_dt > '2025-01-01';
+
+SELECT
+    sls_ship_dt,
+    sls_order_dt
+FROM silver.crm_sales_details
+WHERE sls_ship_dt < sls_order_dt;
+
+
+-- 3.4 SALES METRICS CONSISTENCY
+-- sls_sales = sls_quantity * sls_price
+-- Expectation: No results
+
+SELECT
+    sls_sales,
+    sls_quantity,
+    sls_price
+FROM silver.crm_sales_details
+WHERE sls_sales <> sls_quantity * sls_price
+    OR sls_sales IS NULL OR sls_sales <= 0
+    OR sls_quantity IS NULL OR sls_quantity <= 0
+    OR sls_price IS NULL OR sls_price <= 0
+ORDER BY
+    sls_sales,
+    sls_quantity,
+    sls_price;
