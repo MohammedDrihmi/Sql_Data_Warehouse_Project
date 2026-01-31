@@ -1,0 +1,126 @@
+/* =========================================================
+   BRONZE LAYER – DATA QUALITY CHECKS (ERP)
+   =========================================================
+   Purpose:
+   This script performs DATA QUALITY DETECTION on ERP source
+   tables in the Bronze layer.
+
+   Key Principles:
+   - This script only IDENTIFIES data quality issues.
+   - No data cleaning or transformation is performed here.
+   - Detected issues are resolved in separate transformation
+     scripts before loading clean data into the Silver layer.
+   - Silver layer data is expected to be fully validated.
+
+   Tables Covered:
+   - erp_cust_az12      (ERP Customers)
+   - erp_loc_a101       (ERP Locations)
+   - erp_px_cat_g1v2    (ERP Product Categories)
+========================================================= */
+
+
+----------------------------------------------------------
+-- 1. ERP CUSTOMER DATA QUALITY CHECKS (erp_cust_az12)
+----------------------------------------------------------
+
+-- 1.1 CUSTOMER KEY INTEGRITY CHECK
+-- Ensure ERP customer IDs can be matched to CRM customer keys
+-- Expectation: No results
+
+SELECT
+    CASE
+        WHEN cid LIKE 'NAS%' THEN SUBSTRING(cid, 4, LEN(cid))
+        ELSE cid
+    END AS cid_normalized,
+    bdate,
+    gen
+FROM bronze.erp_cust_az12
+WHERE
+    CASE
+        WHEN cid LIKE 'NAS%' THEN SUBSTRING(cid, 4, LEN(cid))
+        ELSE cid
+    END NOT IN (
+        SELECT cst_key
+        FROM silver.crm_cust_info
+    );
+
+
+-- 1.2 DETECT UNEXPECTED PREFIXES / EXTRA CHARACTERS IN CID
+-- Expectation: No unexpected patterns
+
+SELECT
+    cid
+FROM bronze.erp_cust_az12
+WHERE cid LIKE '%AW00019784%';
+
+
+-- 1.3 OUT-OF-RANGE DATE VALIDATION
+-- Birth date must be within a realistic range
+-- Expectation: No results
+
+SELECT DISTINCT
+    bdate
+FROM bronze.erp_cust_az12
+WHERE bdate < '1924-01-01'
+    OR bdate > GETDATE();
+
+
+-- 1.4 DATA CONSISTENCY – LOW CARDINALITY COLUMN
+-- Gender validation
+
+SELECT DISTINCT
+    gen
+FROM bronze.erp_cust_az12;
+
+
+
+----------------------------------------------------------
+-- 2. ERP LOCATION DATA QUALITY CHECKS (erp_loc_a101)
+----------------------------------------------------------
+
+-- 2.1 CUSTOMER ID FORMAT VALIDATION
+-- CID must be compatible with CRM customer key format
+-- Expectation: No invalid characters (e.g. '-')
+
+SELECT DISTINCT
+    cid
+FROM bronze.erp_loc_a101;
+
+
+-- 2.2 COUNTRY DATA NORMALIZATION & CONSISTENCY
+-- Expected values:
+-- France, Germany, United States, United Kingdom, Canada, 'N/A'
+
+SELECT DISTINCT
+    cntry
+FROM bronze.erp_loc_a101
+ORDER BY cntry;
+
+
+
+----------------------------------------------------------
+-- 3. ERP PRODUCT CATEGORY DATA QUALITY CHECKS (erp_px_cat_g1v2)
+----------------------------------------------------------
+
+-- 3.1 UNWANTED LEADING / TRAILING SPACES CHECK
+-- Columns: cat, subcat, maintenance
+-- Expectation: No results
+
+SELECT *
+FROM bronze.erp_px_cat_g1v2
+WHERE cat <> TRIM(cat)
+   OR subcat <> TRIM(subcat)
+   OR maintenance <> TRIM(maintenance);
+
+
+-- 3.2 DATA CONSISTENCY – CATEGORICAL VALUES
+-- Expectations:
+-- Categories   : Accessories, Bikes, Clothing, Components
+-- Maintenance  : Yes, No
+-- Subcategories: 37 valid subcategories
+
+SELECT DISTINCT
+    cat,
+    subcat,
+    maintenance
+FROM bronze.erp_px_cat_g1v2;
