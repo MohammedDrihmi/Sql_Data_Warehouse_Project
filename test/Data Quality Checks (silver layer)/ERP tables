@@ -1,0 +1,126 @@
+/* =========================================================
+   SILVER LAYER – DATA QUALITY VALIDATION (ERP)
+   =========================================================
+   Purpose:
+   This script validates the quality of CLEANED ERP data
+   after it has been transformed and loaded into the
+   Silver layer.
+
+   Key Principles:
+   - Silver layer data is expected to be fully clean
+   - Any returned rows indicate a DATA PIPELINE ISSUE
+   - No transformation or cleaning is performed here
+   - These checks ensure data is safe for analytics
+     and Gold layer consumption
+
+   Tables Covered:
+   - erp_cust_az12      (ERP Customers)
+   - erp_loc_a101       (ERP Locations)
+   - erp_px_cat_g1v2    (ERP Product Categories)
+========================================================= */
+
+
+----------------------------------------------------------
+-- 1. ERP CUSTOMER DATA QUALITY CHECKS (erp_cust_az12)
+----------------------------------------------------------
+
+-- 1.1 CUSTOMER KEY INTEGRITY CHECK
+-- ERP customer IDs must be joinable with CRM customer keys
+-- Expectation: No results
+
+SELECT
+    CASE
+        WHEN cid LIKE 'NAS%' THEN SUBSTRING(cid, 4, LEN(cid))
+        ELSE cid
+    END AS cid_normalized,
+    bdate,
+    gen
+FROM silver.erp_cust_az12
+WHERE
+    CASE
+        WHEN cid LIKE 'NAS%' THEN SUBSTRING(cid, 4, LEN(cid))
+        ELSE cid
+    END NOT IN (
+        SELECT cst_key
+        FROM silver.crm_cust_info
+    );
+
+
+-- 1.2 DETECT UNEXPECTED PREFIXES / EXTRA CHARACTERS IN CID
+-- Expectation: No unexpected patterns
+
+SELECT
+    cid
+FROM silver.erp_cust_az12
+WHERE cid LIKE '%AW00019784%';
+
+
+-- 1.3 INVALID DATE CHECK
+-- Birth date must not be in the future
+-- Expectation: No results
+
+SELECT DISTINCT
+    bdate
+FROM silver.erp_cust_az12
+WHERE bdate > GETDATE();
+
+
+-- 1.4 DATA CONSISTENCY – LOW CARDINALITY COLUMN
+-- Gender validation
+
+SELECT DISTINCT
+    gen
+FROM silver.erp_cust_az12;
+
+
+
+----------------------------------------------------------
+-- 2. ERP LOCATION DATA QUALITY CHECKS (erp_loc_a101)
+----------------------------------------------------------
+
+-- 2.1 CUSTOMER ID FORMAT VALIDATION
+-- CID must match CRM customer key format
+-- Expectation: No invalid characters (e.g. '-')
+
+SELECT DISTINCT
+    cid
+FROM silver.erp_loc_a101;
+
+
+-- 2.2 COUNTRY DATA NORMALIZATION & CONSISTENCY
+-- Expected values:
+-- France, Germany, United States, United Kingdom, Canada, 'N/A'
+
+SELECT DISTINCT
+    cntry
+FROM silver.erp_loc_a101
+ORDER BY cntry;
+
+
+
+----------------------------------------------------------
+-- 3. ERP PRODUCT CATEGORY DATA QUALITY CHECKS (erp_px_cat_g1v2)
+----------------------------------------------------------
+
+-- 3.1 UNWANTED LEADING / TRAILING SPACES
+-- Columns: cat, subcat, maintenance
+-- Expectation: No results
+
+SELECT *
+FROM silver.erp_px_cat_g1v2
+WHERE cat <> TRIM(cat)
+   OR subcat <> TRIM(subcat)
+   OR maintenance <> TRIM(maintenance);
+
+
+-- 3.2 DATA CONSISTENCY – CATEGORICAL VALUES
+-- Expectations:
+-- Categories   : Accessories, Bikes, Clothing, Components
+-- Maintenance  : Yes, No
+-- Subcategories: 37 valid subcategories
+
+SELECT DISTINCT
+    cat,
+    subcat,
+    maintenance
+FROM silver.erp_px_cat_g1v2;
