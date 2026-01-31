@@ -1,0 +1,218 @@
+/* =========================================================
+   BRONZE LAYER – DATA QUALITY CHECKS (CRM)
+   =========================================================
+   Purpose:
+   This script performs DATA QUALITY DETECTION on the Bronze
+   layer for CRM source tables.
+
+   Important Notes:
+   - This script ONLY detects data quality issues.
+   - No cleaning or transformation is done here.
+   - Identified issues are handled in separate transformation
+     scripts before loading data into the Silver layer.
+   - Data in the Silver layer is expected to be fully clean.
+
+   Tables Covered:
+   - crm_cust_info      (Customers)
+   - crm_prd_info       (Products)
+   - crm_sales_details  (Sales Details)
+========================================================= */
+
+
+----------------------------------------------------------
+-- 1. CUSTOMER DATA QUALITY CHECKS (crm_cust_info)
+----------------------------------------------------------
+
+-- 1.1 NULL OR DUPLICATE PRIMARY KEY CHECK
+-- Expectation: No results
+
+SELECT
+    cst_id,
+    COUNT(*) AS id_count
+FROM bronze.crm_cust_info
+GROUP BY cst_id
+HAVING COUNT(*) > 1
+    OR cst_id IS NULL;
+
+
+-- 1.2 UNWANTED LEADING / TRAILING SPACES
+-- Expectation: No results
+
+-- First Name
+SELECT
+    cst_firstname
+FROM bronze.crm_cust_info
+WHERE cst_firstname <> TRIM(cst_firstname);
+
+-- Last Name
+SELECT
+    cst_lastname
+FROM bronze.crm_cust_info
+WHERE cst_lastname <> TRIM(cst_lastname);
+
+
+-- 1.3 DATA CONSISTENCY – LOW CARDINALITY COLUMNS
+
+-- Gender
+-- Expected values: 'Male', 'Female'
+SELECT DISTINCT
+    cst_gndr
+FROM bronze.crm_cust_info;
+
+-- Marital Status
+-- Expected values: 'Married', 'Single', 'N/A'
+SELECT DISTINCT
+    cst_marital_status
+FROM bronze.crm_cust_info;
+
+
+
+----------------------------------------------------------
+-- 2. PRODUCT DATA QUALITY CHECKS (crm_prd_info)
+----------------------------------------------------------
+
+-- 2.1 NULL OR DUPLICATE PRIMARY KEY CHECK
+-- Expectation: No results
+
+SELECT
+    prd_id,
+    COUNT(*) AS total_count
+FROM bronze.crm_prd_info
+GROUP BY prd_id
+HAVING COUNT(*) > 1
+    OR prd_id IS NULL;
+
+
+-- 2.2 UNWANTED LEADING / TRAILING SPACES
+-- Expectation: No results
+
+SELECT *
+FROM bronze.crm_prd_info
+WHERE prd_nm <> TRIM(prd_nm);
+
+
+-- 2.3 NUMERIC DATA QUALITY CHECK
+-- Column: prd_cost
+-- Expectation: Cost must be > 0 and NOT NULL
+
+SELECT *
+FROM bronze.crm_prd_info
+WHERE prd_cost <= 0
+    OR prd_cost IS NULL;
+
+
+-- 2.4 DATA CONSISTENCY – LOW CARDINALITY
+-- Product Line validation
+
+SELECT DISTINCT
+    prd_line
+FROM bronze.crm_prd_info;
+
+
+-- 2.5 INVALID DATE CHECK
+-- Product end date must be greater than start date
+
+SELECT *
+FROM bronze.crm_prd_info
+WHERE prd_end_dt < prd_start_dt;
+
+
+
+----------------------------------------------------------
+-- 3. SALES DATA QUALITY CHECKS (crm_sales_details)
+----------------------------------------------------------
+
+-- 3.1 UNWANTED LEADING / TRAILING SPACES
+-- Expectation: No results
+
+SELECT
+    sls_ord_num
+FROM bronze.crm_sales_details
+WHERE sls_ord_num <> TRIM(sls_ord_num);
+
+
+-- 3.2 FOREIGN KEY INTEGRITY CHECKS
+-- Expectation: All keys must exist in parent tables
+
+-- Product Key
+SELECT *
+FROM bronze.crm_sales_details
+WHERE sls_prd_key NOT IN (
+    SELECT prd_key
+    FROM silver.crm_prd_info
+);
+
+-- Customer ID
+SELECT *
+FROM bronze.crm_sales_details
+WHERE sls_cust_id NOT IN (
+    SELECT cst_id
+    FROM silver.crm_cust_info
+);
+
+
+-- 3.3 ORDER DATE VALIDATION (INT → DATE PRE-CHECK)
+-- Expectations:
+-- - Length = 8
+-- - Valid range between 19000101 and 20500101
+-- - No zero or negative values
+
+SELECT
+    NULLIF(sls_order_dt, 0) AS sls_order_dt
+FROM bronze.crm_sales_details
+WHERE sls_order_dt <= 0
+    OR LEN(sls_order_dt) <> 8
+    OR sls_order_dt < 19000101
+    OR sls_order_dt > 20500101;
+
+
+-- 3.4 SHIP DATE VALIDATION
+
+-- Invalid values or length
+SELECT
+    sls_ship_dt
+FROM bronze.crm_sales_details
+WHERE sls_ship_dt <= 0
+    OR LEN(sls_ship_dt) <> 8
+    OR sls_ship_dt < 19000101
+    OR sls_ship_dt > 20500101;
+
+-- Ship date must be after order date
+SELECT
+    sls_ship_dt,
+    sls_order_dt
+FROM bronze.crm_sales_details
+WHERE sls_ship_dt < sls_order_dt;
+
+
+-- 3.5 DUE DATE VALIDATION
+-- Due date must be valid and after ship & order dates
+
+SELECT
+    sls_due_dt
+FROM bronze.crm_sales_details
+WHERE sls_due_dt <= 0
+    OR LEN(sls_due_dt) <> 8
+    OR sls_due_dt < 19000101
+    OR sls_due_dt > 20500101
+    OR sls_due_dt < sls_ship_dt
+    OR sls_due_dt < sls_order_dt;
+
+
+-- 3.6 SALES METRICS CONSISTENCY CHECK
+-- sls_sales = sls_quantity * sls_price
+-- Expectation: No results
+
+SELECT
+    sls_sales,
+    sls_quantity,
+    sls_price
+FROM bronze.crm_sales_details
+WHERE sls_sales <> sls_quantity * sls_price
+    OR sls_sales IS NULL OR sls_sales <= 0
+    OR sls_quantity IS NULL OR sls_quantity <= 0
+    OR sls_price IS NULL OR sls_price <= 0
+ORDER BY
+    sls_sales,
+    sls_quantity,
+    sls_price;
